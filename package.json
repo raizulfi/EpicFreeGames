@@ -1,0 +1,45 @@
+{
+  "name": "epic-free-games-claimer",
+  "version": "1.0.0",
+  "description": "Automatically claim free Epic Games promotions",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "claim": "node dist/cli/claim.js",
+    "login": "node dist/cli/login.js",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:e2e": "playwright test",
+    "debug": "node --inspect-brk dist/cli/claim.js",
+    "clean": "node -e \"require('fs').rmSync('dist', {recursive: true, force: true})\"",
+    "prebuild": "npm run clean"
+  },
+  "keywords": [
+    "epic-games",
+    "free-games",
+    "automation",
+    "playwright",
+    "nodejs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "playwright": "^1.40.1",
+    "winston": "^3.11.0",
+    "axios": "^1.6.5",
+    "tsx": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.8",
+    "@types/node": "^20.10.5",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3",
+    "@playwright/test": "^1.40.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

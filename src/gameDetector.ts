@@ -89,20 +89,20 @@ export class GameDetector {
             return card ? card.textContent : '';
           });
           
-          const alreadyOwned = (cardText && (
+          const isAlreadyOwned = (cardText && (
             cardText.toLowerCase().includes('own') || 
             cardText.toLowerCase().includes('in library') ||
             cardText.toLowerCase().includes('library')
           )) || false;
 
-          if (!alreadyOwned && gameUrl && gameName && gameName.toLowerCase() !== 'unknown') {
+          if (!isAlreadyOwned && gameUrl && gameName && gameName.toLowerCase() !== 'unknown') {
             games.push({
               name: gameName.trim(),
               url: gameUrl,
               alreadyOwned: false,
             });
             logger.debug('Found free game: %s (URL: %s)', gameName, gameUrl);
-          } else if (alreadyOwned) {
+          } else if (isAlreadyOwned) {
             logger.debug('Game already owned: %s', gameName);
           }
         } catch (err) {
@@ -115,7 +115,11 @@ export class GameDetector {
       const cleanedGames = this.deduplicateGames(games);
       logger.info('After deduplication: %d games', cleanedGames.length);
 
-      return cleanedGames;
+      // Limit to first 4 games (this week's free games)
+      const limitedGames = cleanedGames.slice(0, 4);
+      logger.info('Limited to %d games for this week', limitedGames.length);
+
+      return limitedGames;
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err);
       logger.error('Error detecting free games: %s', errorMessage);

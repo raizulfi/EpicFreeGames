@@ -4,11 +4,6 @@ on:
   schedule:
     - cron: '0 10 * * 4'
   workflow_dispatch:
-    inputs:
-      debug:
-        description: 'Enable debug mode'
-        required: false
-        default: 'false'
 
 jobs:
   claim:
@@ -29,53 +24,39 @@ jobs:
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+        run: npx playwright install --with-deps chromium
 
       - name: Build project
         run: npm run build
+
+      - name: Restore session
+        run: |
+          mkdir -p sessions
+          echo "${{ secrets.EPIC_SESSION }}" | base64 -d > sessions/session.json
 
       - name: Run claimer
         env:
           EPIC_EMAIL: ${{ secrets.EPIC_EMAIL }}
           EPIC_PASSWORD: ${{ secrets.EPIC_PASSWORD }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           HEADLESS: 'true'
           SCREENSHOT_ON_ERROR: 'true'
-          LOG_LEVEL: ${{ github.event.inputs.debug == 'true' && 'debug' || 'info' }}
+          LOG_LEVEL: 'info'
         run: npm run claim
         continue-on-error: true
 
-      - name: Upload logs as artifacts
+      - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claimer-logs
           path: logs/
-          retention-days: 30
+          retention-days: 7
 
-      - name: Upload screenshots as artifacts
+      - name: Upload screenshots
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: claimer-screenshots
           path: screenshots/
           retention-days: 7
-
-      - name: Post failure notification
-        if: failure()
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          curl -X POST "$DISCORD_WEBHOOK_URL" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "embeds": [{
-                "title": "Epic Games Claimer - Failed",
-                "description": "The GitHub Actions workflow encountered an error",
-                "color": 15158332,
-                "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              }]
-            }'
-        continue-on-error: true

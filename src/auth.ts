@@ -10,202 +10,168 @@ export interface LoginResult {
 }
 
 export class AuthManager {
-  private browserManager: BrowserManager;
-  private config: Config;
+  constructor(private browserManager: BrowserManager, private config: Config) {}
 
-  constructor(browserManager: BrowserManager, config: Config) {
-    this.browserManager = browserManager;
-    this.config = config;
-  }
-
-  async login(email: string, password: string): Promise<LoginResult> {
+  async verifySession(): Promise<boolean> {
     const logger = getLogger();
-
-    // Skip login if using Firefox profile mode - assume already logged in
-    if (this.config.useFirefoxProfile) {
-      logger.info('Firefox profile mode enabled - skipping password login, verifying session...');
-      const page = await this.browserManager.getPage();
-      try {
-        await page.goto('https://www.epicgames.com/store/en-US/free-games', { waitUntil: 'networkidle' });
-        const loggedIn = await this.checkLogin(page);
-        
-        if (loggedIn) {
-          logger.info('Firefox session verified - user is logged in');
-          return { success: true, message: 'Firefox session verified - already logged in' };
-        } else {
-          logger.error('Firefox session not valid - user may not be logged in to Epic Games');
-          return { success: false, message: 'Firefox session not valid - please log in manually in Firefox first' };
-        }
-      } finally {
-        await page.close();
-      }
-    }
-
     const page = await this.browserManager.getPage();
-
     try {
-      logger.info('Starting Epic Games login...');
-      await page.goto('https://www.epicgames.com/account/login', { waitUntil: 'domcontentloaded' });
-
-      // Wait for page to fully render
-      await page.waitForLoadState('domcontentloaded');
-      await page.waitForTimeout(3000);
-
-      await this.browserManager.takeScreenshot(page, 'login-page', 'success');
-
-      const emailInput = page.locator('input[id="email"]');
-      const passwordInput = page.locator('input[id="password"]');
-      const loginButton = page.locator('button[type="submit"]');
-
-      const emailExists = await emailInput.isVisible({ timeout: 10000 }).catch(() => false);
-
-      if (!emailExists) {
-        logger.warn('Email input not found, checking for already logged in state...');
-        const logoutButton = page.locator('button:has-text("Logout")');
-        if (await logoutButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-          logger.info('Already logged in');
-          return { success: true, message: 'Already logged in' };
-        }
-        return { success: false, message: 'Login form not found' };
-      }
-
-      // Check if email input is readonly (session already loaded)
-      const isReadonly = await emailInput.evaluate((el: any) => el.readOnly);
-      if (isReadonly) {
-        logger.info('Email field is readonly - session already loaded, user is logged in');
-        return { success: true, message: 'Already logged in via session' };
-      }
-
-      await emailInput.fill(email);
-      await passwordInput.fill(password);
-
-      logger.debug('Filled login credentials');
-
-      // Make sure the button is in view and clickable before clicking
-      await loginButton.scrollIntoViewIfNeeded();
-      
-      // Use type 'submit' form submission instead of just click
-      await loginButton.press('Enter');
-      logger.debug('Pressed Enter on login button');
-
-      // Wait for navigation or form submission
-      try {
-        await page.waitForNavigation({ waitUntil: 'networkidle', timeout: 20000 }).catch(() => {});
-      } catch (e) {
-        logger.debug('No navigation detected after Enter');
-      }
-
-      // Wait a bit more for page to respond
-      await page.waitForTimeout(4000);
-
-      logger.debug('Current URL after sign in: %s', page.url());
-
-      const captchaDetected = await page
-        .locator('iframe[title*="reCAPTCHA"], [class*="g-recaptcha"]')
-        .isVisible({ timeout: 2000 })
-        .catch(() => false);
-
-      if (captchaDetected) {
-        logger.warn('CAPTCHA detected on login page');
-        return { success: false, message: 'CAPTCHA required', requiresCaptcha: true };
-      }
-
-      // Check for 2FA/MFA
-      const mfaIndicators = [
-        page.locator('text=/verification code/i'),
-        page.locator('text=/authenticator/i'),
-        page.locator('text=/2fa/i'),
-        page.locator('[class*="mfa"], [class*="2fa"]'),
-      ];
-
-      for (const indicator of mfaIndicators) {
-        if (await indicator.isVisible({ timeout: 1000 }).catch(() => false)) {
-          logger.warn('2FA/MFA required - manual intervention needed');
-          return { success: false, message: '2FA/MFA required', requiresCaptcha: true };
-        }
-      }
-
-      const loadingSpinner = page.locator('[class*="spinner"], [class*="loading"]');
-      try {
-        await page.waitForFunction(() => {
-          return !document.querySelector('[class*="spinner"]') && !document.querySelector('[class*="loading"]');
-        }, { timeout: 30000 });
-      } catch {
-        logger.debug('Timeout waiting for loading to complete');
-      }
-
-      await page.waitForLoadState('networkidle').catch(() => {});
-      await page.waitForTimeout(2000);
-
-      const errorMessages = [
-        page.locator('text=/Invalid email or password/i'),
-        page.locator('text=/too many login attempts/i'),
-        page.locator('[role="alert"]'),
-      ];
-
-      for (const errorElement of errorMessages) {
-        if (await errorElement.isVisible({ timeout: 1000 }).catch(() => false)) {
-          const errorText = await errorElement.textContent();
-          logger.error('Login error: %s', errorText);
-          return { success: false, message: `Login failed: ${errorText}` };
-        }
-      }
-
-      // Try to navigate to free games page to verify login worked
-      try {
-        logger.debug('Verifying login by navigating to free games page...');
-        await page.goto('https://www.epicgames.com/store/en-US/free-games', { waitUntil: 'networkidle', timeout: 30000 });
-        await page.waitForTimeout(2000);
-        
-        // Check if we're actually logged in by looking at the page content
-        const pageContent = await page.content();
-        
-        // Look for logged-in indicators on the free games page
-        const logoutButton = await page.locator('button:has-text("Log Out"), [class*="logout"]').isVisible({ timeout: 2000 }).catch(() => false);
-        const userMenu = await page.locator('[class*="user"], [class*="profile"], [class*="account"]').isVisible({ timeout: 2000 }).catch(() => false);
-        const claimableGames = await page.locator('button:has-text("Claim"), [class*="claim"]').isVisible({ timeout: 2000 }).catch(() => false);
-        
-        logger.debug('Logout button visible: %s', logoutButton);
-        logger.debug('User menu visible: %s', userMenu);
-        logger.debug('Claimable games visible: %s', claimableGames);
-        
-        if (logoutButton || claimableGames) {
-          logger.info('Login successful - verified by logout button or claimable games');
-          await this.browserManager.saveSession();
-          return { success: true, message: 'Login successful' };
-        }
-        
-        // Alternative: check page title or URL
-        const currentUrl = page.url();
-        logger.debug('Current URL: %s', currentUrl);
-        
-        if (!currentUrl.includes('login') && pageContent.length > 10000) {
-          logger.info('Login successful - URL changed from login page');
-          await this.browserManager.saveSession();
-          return { success: true, message: 'Login successful' };
-        }
-      } catch (navError) {
-        logger.debug('Navigation error during verification: %s', navError);
-      }
-
-      logger.warn('Could not confirm login success');
-      return { success: false, message: 'Login confirmation failed' };
+      await page.goto('https://www.epicgames.com/store/en-US/', {
+        waitUntil: 'domcontentloaded',
+        timeout: 20000,
+      });
+      await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+      const loggedIn = await this.isLoggedIn(page);
+      logger.info('Session valid: %s', loggedIn);
+      return loggedIn;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error('Login error: %s', errorMessage);
-      await this.browserManager.takeScreenshot(page, 'login-error', 'error');
-      return { success: false, message: `Login error: ${errorMessage}` };
+      logger.warn('Session verification failed: %s', err);
+      return false;
     } finally {
       await page.close();
     }
   }
 
-  async checkLogin(page: Page): Promise<boolean> {
+  async login(email: string, password: string): Promise<LoginResult> {
+    const logger = getLogger();
+
+    const page = await this.browserManager.getPage();
     try {
-      const accountLink = page.locator('a[href*="/account"]');
-      return await accountLink.isVisible({ timeout: 3000 }).catch(() => false);
-    } catch {
-      return false;
+      logger.info('Starting Epic Games login...');
+      // Go directly to the email/password form, bypassing the login-method picker
+      await page.goto('https://www.epicgames.com/id/login/epic', {
+        waitUntil: 'domcontentloaded',
+      });
+      await page.waitForLoadState('networkidle').catch(() => {});
+      await page.waitForTimeout(2000);
+
+      // Dismiss cookie consent if present
+      const cookieBtn = page.locator(
+        'button:has-text("Accept All"), button:has-text("Accept"), button[id*="accept"]'
+      );
+      if (await cookieBtn.first().isVisible({ timeout: 3000 }).catch(() => false)) {
+        await cookieBtn.first().click().catch(() => {});
+        await page.waitForTimeout(1000);
+      }
+
+      await this.browserManager.takeScreenshot(page, 'login-page', 'success');
+
+      const emailSelector = 'input[id="email"], input[name="email"], input[type="email"]';
+      const emailHandle = await page
+        .waitForSelector(emailSelector, { state: 'visible', timeout: 15000 })
+        .catch(() => null);
+
+      if (!emailHandle) {
+        const currentUrl = page.url();
+        if (!currentUrl.includes('/id/login') && !currentUrl.includes('/account/login')) {
+          logger.info('Already redirected away from login — session is valid');
+          return { success: true, message: 'Already logged in' };
+        }
+        await this.browserManager.takeScreenshot(page, 'login-form-missing', 'error');
+        return { success: false, message: 'Login form not found' };
+      }
+
+      const emailInput = page.locator(emailSelector).first();
+      const passwordInput = page
+        .locator('input[id="password"], input[name="password"], input[type="password"]')
+        .first();
+
+      // Readonly email means the session cookie pre-filled the form — already logged in
+      if (await emailInput.evaluate((el: any) => el.readOnly)) {
+        logger.info('Email field is readonly — already logged in via session');
+        return { success: true, message: 'Already logged in via session' };
+      }
+
+      await emailInput.fill(email);
+      await passwordInput.fill(password);
+      logger.debug('Filled login credentials');
+
+      const loginButton = page.locator('button[type="submit"]').first();
+      await loginButton.scrollIntoViewIfNeeded();
+      await loginButton.click();
+      logger.debug('Clicked login button');
+
+      await page.waitForLoadState('networkidle', { timeout: 20000 }).catch(() => {});
+      await page.waitForTimeout(3000);
+
+      logger.debug('URL after login: %s', page.url());
+
+      // CAPTCHA check
+      if (
+        await page
+          .locator('iframe[title*="reCAPTCHA"], [class*="g-recaptcha"]')
+          .isVisible({ timeout: 2000 })
+          .catch(() => false)
+      ) {
+        logger.warn('CAPTCHA detected');
+        return { success: false, message: 'CAPTCHA required', requiresCaptcha: true };
+      }
+
+      // 2FA check
+      const mfaLocator = page.locator(
+        'text=/verification code/i, text=/authenticator/i, text=/2fa/i, [class*="mfa"], [class*="2fa"]'
+      );
+      if (await mfaLocator.first().isVisible({ timeout: 1000 }).catch(() => false)) {
+        logger.warn('2FA/MFA required — manual intervention needed');
+        return { success: false, message: '2FA/MFA required', requiresCaptcha: true };
+      }
+
+      // Wait for any loading spinner to clear
+      await page
+        .waitForFunction(
+          () =>
+            !document.querySelector('[class*="spinner"]') &&
+            !document.querySelector('[class*="loading"]'),
+          { timeout: 15000 }
+        )
+        .catch(() => {});
+
+      // Check for explicit login errors
+      const errorLocator = page.locator(
+        'text=/invalid email or password/i, text=/too many login attempts/i, [role="alert"]'
+      );
+      if (await errorLocator.first().isVisible({ timeout: 1000 }).catch(() => false)) {
+        const errorText = await errorLocator.first().textContent().catch(() => 'unknown error');
+        logger.error('Login error: %s', errorText);
+        return { success: false, message: `Login failed: ${errorText}` };
+      }
+
+      // Verify by loading the store
+      await page
+        .goto('https://www.epicgames.com/store/en-US/free-games', {
+          waitUntil: 'networkidle',
+          timeout: 30000,
+        })
+        .catch(() => {});
+      await page.waitForTimeout(2000);
+
+      const currentUrl = page.url();
+      const pageContent = await page.content();
+      if (!currentUrl.includes('login') && pageContent.length > 10000) {
+        logger.info('Login successful');
+        await this.browserManager.saveSession();
+        return { success: true, message: 'Login successful' };
+      }
+
+      logger.warn('Could not confirm login success');
+      return { success: false, message: 'Login confirmation failed' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Login error: %s', msg);
+      await this.browserManager.takeScreenshot(page, 'login-error', 'error');
+      return { success: false, message: `Login error: ${msg}` };
+    } finally {
+      await page.close();
     }
+  }
+
+  private async isLoggedIn(page: Page): Promise<boolean> {
+    // Logged-in pages have an account/profile nav element; login pages redirect back to /id/login
+    const url = page.url();
+    if (url.includes('/id/login') || url.includes('/account/login')) return false;
+    const accountEl = page.locator(
+      'a[href*="/account"], [class*="account"], [class*="userAvatar"], [aria-label*="account" i]'
+    );
+    return accountEl.first().isVisible({ timeout: 3000 }).catch(() => false);
   }
 }

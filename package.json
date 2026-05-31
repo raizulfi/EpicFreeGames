@@ -8,6 +8,7 @@
     "start": "node dist/index.js",
     "claim": "node dist/cli/claim.js",
     "login": "node dist/cli/login.js",
+    "manual-login": "node dist/cli/manual-login.js",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:e2e": "playwright test",

@@ -10,7 +10,7 @@ export function initLogger(config: Config): winston.Logger {
     return logger;
   }
 
-  const logDir = config.logDir;
+  const logDir = './logs';
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });
   }

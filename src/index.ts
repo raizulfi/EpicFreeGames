@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { BrowserManager } from './browser';
 import { AuthManager } from './auth';
 import { GameDetector } from './gameDetector';
@@ -19,7 +21,7 @@ export class EpicGamesClaimer {
   private logger = initLogger(this.config);
   private browserManager = new BrowserManager(this.config);
   private authManager = new AuthManager(this.browserManager, this.config);
-  private gameDetector = new GameDetector(this.browserManager);
+  private gameDetector = new GameDetector();
   private gameClaimer = new GameClaimer(this.browserManager);
   private notificationManager = new NotificationManager(this.config);
 
@@ -38,22 +40,43 @@ export class EpicGamesClaimer {
     try {
       await this.browserManager.launch();
 
-      logger.info('Attempting login with credentials...');
-      const loginResult = await this.authManager.login(this.config.epicEmail || '', this.config.epicPassword || '');
+      const sessionFile = path.join(this.config.sessionDir, 'session.json');
+      const hasSession = fs.existsSync(sessionFile);
+
+      let loginResult;
+      if (hasSession) {
+        logger.info('Session file found — verifying...');
+        const valid = await this.authManager.verifySession();
+        if (valid) {
+          loginResult = { success: true, message: 'Valid session restored' };
+        } else {
+          logger.warn('Session expired — logging in with credentials...');
+          loginResult = await this.authManager.login(
+            this.config.epicEmail || '',
+            this.config.epicPassword || ''
+          );
+        }
+      } else {
+        logger.info('No session found — logging in with credentials...');
+        loginResult = await this.authManager.login(
+          this.config.epicEmail || '',
+          this.config.epicPassword || ''
+        );
+      }
 
       if (!loginResult.success) {
         if (loginResult.requiresCaptcha) {
-          logger.error('Login requires CAPTCHA. Please log in manually and resolve the CAPTCHA.');
+          logger.error('Login requires manual intervention (CAPTCHA/2FA). Run "npm run manual-login" first.');
           await this.notificationManager.sendNotifications({
-            title: 'Epic Games Claimer - CAPTCHA Required',
-            description: 'Please log in manually and resolve the CAPTCHA on the Epic Games login page.',
+            title: 'Epic Games Claimer — Action Required',
+            description: 'CAPTCHA or 2FA detected. Run "npm run manual-login" to authenticate.',
             type: 'error',
           });
           summary.requiresCaptcha = 1;
         } else {
           logger.error('Login failed: %s', loginResult.message);
           await this.notificationManager.sendNotifications({
-            title: 'Epic Games Claimer - Login Failed',
+            title: 'Epic Games Claimer — Login Failed',
             description: loginResult.message,
             type: 'error',
           });
@@ -61,24 +84,23 @@ export class EpicGamesClaimer {
         return summary;
       }
 
-      logger.info('Login successful');
+      logger.info('Authenticated — detecting free games...');
 
-      logger.info('Detecting free games...');
       let games = [];
       try {
         games = await this.gameDetector.detectFreeGames();
-      } catch (detectErr) {
-        logger.error('Failed to detect games: %s', detectErr);
-        throw detectErr;
+      } catch (err) {
+        logger.error('Failed to detect games: %s', err);
+        throw err;
       }
       summary.totalGames = games.length;
 
       if (games.length === 0) {
-        logger.info('No free games available to claim');
+        logger.info('No free games available to claim this week');
         return summary;
       }
 
-      logger.info('Claiming %d games...', games.length);
+      logger.info('Claiming %d game(s)...', games.length);
       const results = await this.gameClaimer.claimGames(
         games,
         this.config.maxRetries,
@@ -92,10 +114,11 @@ export class EpicGamesClaimer {
       for (const result of results) {
         if (result.success) {
           summary.successfullyClaimed++;
-          successfulGames.push(result.gameName);
           if (result.alreadyOwned) {
             summary.alreadyOwned++;
             alreadyOwnedGames.push(result.gameName);
+          } else {
+            successfulGames.push(result.gameName);
           }
         } else if (result.requiresCaptcha) {
           summary.requiresCaptcha++;
@@ -105,63 +128,55 @@ export class EpicGamesClaimer {
         }
       }
 
-      const notificationSummary = [
-        `Successfully claimed: ${summary.successfullyClaimed - summary.alreadyOwned}`,
+      const notificationBody = [
+        `Claimed: ${successfulGames.length}`,
         `Already owned: ${summary.alreadyOwned}`,
         `Failed: ${summary.failed}`,
-        `CAPTCHA required: ${summary.requiresCaptcha}`,
-      ].join('\n');
+        summary.requiresCaptcha > 0 ? `CAPTCHA required: ${summary.requiresCaptcha}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
 
-      logger.info('Claim Summary:\n%s', notificationSummary);
+      logger.info('Summary:\n%s', notificationBody);
 
       await this.notificationManager.sendNotifications({
-        title: 'Epic Games Claimer - Session Complete',
-        description: notificationSummary,
+        title: 'Epic Games Claimer — Session Complete',
+        description: notificationBody,
         type: successfulGames.length > 0 ? 'success' : 'info',
         games: successfulGames.length > 0 ? successfulGames : undefined,
       });
 
       return summary;
     } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : String(err);
-      logger.error('Critical error during claim process: %s', errorMessage);
-
+      const msg = err instanceof Error ? err.message : String(err);
+      logger.error('Critical error: %s', msg);
       await this.notificationManager.sendNotifications({
-        title: 'Epic Games Claimer - Critical Error',
-        description: errorMessage,
+        title: 'Epic Games Claimer — Critical Error',
+        description: msg,
         type: 'error',
       });
-
       throw err;
     } finally {
-      try {
-        await this.browserManager.close();
-      } catch (err) {
-        logger.error('Error closing browser: %s', err);
-      }
+      await this.browserManager.close().catch(() => {});
     }
   }
 
   async login(): Promise<void> {
     const logger = getLogger();
     logger.info('=== Epic Games Login Started ===');
-
     try {
       await this.browserManager.launch();
-
-      const loginResult = await this.authManager.login(this.config.epicEmail || '', this.config.epicPassword || '');
-
-      if (loginResult.success) {
+      const result = await this.authManager.login(
+        this.config.epicEmail || '',
+        this.config.epicPassword || ''
+      );
+      if (result.success) {
         logger.info('Login successful');
       } else {
-        logger.error('Login failed: %s', loginResult.message);
+        logger.error('Login failed: %s', result.message);
       }
     } finally {
-      try {
-        await this.browserManager.close();
-      } catch (err) {
-        logger.error('Error closing browser: %s', err);
-      }
+      await this.browserManager.close().catch(() => {});
     }
   }
 }

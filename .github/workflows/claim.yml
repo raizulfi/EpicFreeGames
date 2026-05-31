@@ -30,9 +30,12 @@ jobs:
         run: npm run build
 
       - name: Restore session
+        env:
+          EPIC_SESSION: ${{ secrets.EPIC_SESSION }}
         run: |
           mkdir -p sessions
-          echo "${{ secrets.EPIC_SESSION }}" | base64 -d > sessions/session.json
+          echo "$EPIC_SESSION" | base64 -d > sessions/session.json
+          echo "Session file size: $(wc -c < sessions/session.json) bytes"
 
       - name: Run claimer
         env:

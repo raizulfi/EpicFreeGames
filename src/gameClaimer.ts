@@ -159,7 +159,76 @@ export class GameClaimer {
       logger.debug('Clicking Get/Claim button for %s', game.name);
       await getButton.first().click();
 
+      await page.waitForTimeout(3000);
+
+      // Wait for any page changes/navigation
+      await page.waitForLoadState('domcontentloaded').catch(() => {});
       await page.waitForTimeout(2000);
+
+      // Check for iframe first (Epic uses iframes for checkout)
+      let addToLibraryFound = false;
+      
+      const iframes = page.locator('iframe');
+      const iframeCount = await iframes.count();
+      
+      if (iframeCount > 0) {
+        logger.debug('Found %d iframes on page, searching for "Add to library" button', iframeCount);
+        
+        for (let i = 0; i < iframeCount; i++) {
+          try {
+            const frameLocator = page.frameLocator(`iframe:nth-of-type(${i + 1})`);
+            const iframeButton = frameLocator.locator('button:has(span:has-text("Add to library")), button:has-text("Add to library")');
+            
+            if (await iframeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+              logger.debug('Found "Add to library" button in iframe %d', i + 1);
+              await iframeButton.first().click();
+              logger.info('Clicked "Add to library" button in iframe for %s', game.name);
+              addToLibraryFound = true;
+              await page.waitForTimeout(4000);
+              break;
+            }
+          } catch (e) {
+            logger.debug('Error checking iframe %d: %s', i + 1, e);
+          }
+        }
+      }
+
+      // If not in iframe, try regular selectors
+      if (!addToLibraryFound) {
+        logger.debug('Button not found in iframes, trying regular page selectors...');
+        
+        const addButtonSelectors = [
+          'button:has(span:has-text("Add to library"))',
+          'button:has-text("Add to library")',
+          'button:has-text("Add to Library")',
+          'button[class*="add"]',
+          'a:has-text("Add to library")',
+        ];
+
+        for (const selector of addButtonSelectors) {
+          const btn = page.locator(selector);
+          if (await btn.isVisible({ timeout: 2000 }).catch(() => false)) {
+            logger.debug('Found "Add to library" button with selector: %s', selector);
+            try {
+              await btn.first().click();
+              logger.info('Clicked "Add to library" button for %s', game.name);
+              addToLibraryFound = true;
+              await page.waitForTimeout(4000);
+              break;
+            } catch (e) {
+              logger.debug('Failed to click button: %s', e);
+            }
+          }
+        }
+      }
+
+      if (!addToLibraryFound) {
+        logger.debug('No "Add to library" button found, checking page content...');
+        const pageText = await page.content().catch(() => '');
+        if (pageText.toLowerCase().includes('checkout') || pageText.toLowerCase().includes('add to library')) {
+          logger.debug('Checkout page detected but button not clickable');
+        }
+      }
 
       // Check for modal/popup that requires confirmation
       const popupOrModal = page.locator('[role="dialog"], .modal, [class*="Modal"]');
@@ -169,13 +238,14 @@ export class GameClaimer {
           'button:has-text("Confirm"), ' +
           'button:has-text("Agree"), ' +
           'button:has-text("Accept"), ' +
-          'button:has-text("OK")'
+          'button:has-text("OK"), ' +
+          'button:has-text("Add to library")'
         );
 
         if (await confirmButton.isVisible({ timeout: 2000 }).catch(() => false)) {
           await confirmButton.first().click();
           logger.debug('Clicked confirm button');
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(4000);
         }
       }
 

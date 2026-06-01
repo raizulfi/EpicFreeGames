@@ -34,6 +34,15 @@ jobs:
           mkdir -p sessions
           echo "${{ secrets.EPIC_SESSION }}" | base64 -d > sessions/session.json
 
+      - name: Login to Epic Games
+        env:
+          EPIC_EMAIL: ${{ secrets.EPIC_EMAIL }}
+          EPIC_PASSWORD: ${{ secrets.EPIC_PASSWORD }}
+          HEADLESS: 'true'
+          LOG_LEVEL: 'info'
+        run: npm run login
+        continue-on-error: true
+
       - name: Run claimer
         env:
           EPIC_EMAIL: ${{ secrets.EPIC_EMAIL }}

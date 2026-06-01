@@ -36,10 +36,57 @@ A browser window opens. Log in, then close the window. Your session is saved aut
 npm run claim
 ```
 
-## Automate with GitHub Actions
+## Automate with Task Scheduler
 
-1. Fork this repo
-2. Go to **Settings → Secrets** and add `EPIC_EMAIL`, `EPIC_PASSWORD`, and optionally `DISCORD_WEBHOOK_URL`
-3. The workflow runs every Thursday at 10:00 UTC (when Epic rotates free games)
+Epic Games uses Cloudflare human verification which GitHub Actions cannot bypass. Run locally instead.
 
-To trigger it manually: **Actions → Epic Games Free Games Claimer → Run workflow**
+### Windows Task Scheduler
+
+**Epic Games rotates free games every Thursday:**
+- 8:00 AM PT (Pacific Time, UTC-8)
+- 11:00 PM Thursday (Indonesia, UTC+7)
+- 4:00 PM UTC (Coordinated Universal Time)
+
+1. Create a file named `claim.bat` in your project folder:
+
+```batch
+@echo off
+cd C:\path\to\EpicFreeGames
+npm run claim
+```
+
+2. Open **Task Scheduler** (search in Start menu)
+3. Click **Create Basic Task**
+4. Name: `Epic Games Claimer`
+5. Trigger: Weekly
+   - Day: Thursday
+   - Time: 8:00 AM (or shortly after, to avoid race conditions)
+6. Action: **Start a program**
+   - Program: `C:\path\to\EpicFreeGames\claim.bat`
+7. Click **Finish**
+8. **Right-click the task** → **Properties**
+   - General tab: Check "Run with highest privileges"
+   - Settings tab: Uncheck "Stop the task if it runs longer than..."
+9. Click **OK**
+
+### macOS / Linux with Cron
+
+Open terminal and edit your crontab:
+
+```bash
+crontab -e
+```
+
+Add this line (Thursday at 10 AM):
+
+```cron
+0 10 * * 4 cd /path/to/EpicFreeGames && npm run claim
+```
+
+Or for Indonesia time (Thursday at 11 PM):
+
+```cron
+0 23 * * 4 cd /path/to/EpicFreeGames && npm run claim
+```
+
+Save and exit. Done!

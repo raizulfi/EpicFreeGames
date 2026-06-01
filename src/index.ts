@@ -45,23 +45,10 @@ export class EpicGamesClaimer {
 
       let loginResult;
       if (hasSession) {
-        logger.info('Session file found — verifying...');
-        const valid = await this.authManager.verifySession();
-        if (valid) {
-          loginResult = { success: true, message: 'Valid session restored' };
-        } else {
-          logger.warn('Session expired — logging in with credentials...');
-          loginResult = await this.authManager.login(
-            this.config.epicEmail || '',
-            this.config.epicPassword || ''
-          );
-        }
+        logger.info('Session file found — using saved session');
+        loginResult = { success: true, message: 'Using saved session' };
       } else {
-        logger.info('No session found — logging in with credentials...');
-        loginResult = await this.authManager.login(
-          this.config.epicEmail || '',
-          this.config.epicPassword || ''
-        );
+        loginResult = { success: false, message: 'No session found. Run "npm run manual-login" first.', requiresCaptcha: false };
       }
 
       if (!loginResult.success) {
